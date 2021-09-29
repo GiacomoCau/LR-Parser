@@ -11,6 +11,7 @@ import static util.Grammar.EndToken;
 import static util.Grammar.StartRule;
 import static util.LRParser.ActionType.Accept;
 import static util.LRParser.ActionType.First;
+import static util.LRParser.ActionType.GoTo;
 import static util.LRParser.ActionType.Reduce;
 import static util.LRParser.ActionType.Shift;
 
@@ -33,7 +34,7 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 	protected ActionGoToTable actionGoToTable = new ActionGoToTable();
 
 	public enum ActionType {
-		First("f"), Shift("s"), Reduce("r"), Accept("a");
+		First("f"), Shift("s"), Reduce("r"), GoTo("g"), Accept("a");
 		String sigla;
 		ActionType(String sigla) {
 			this.sigla = sigla;
@@ -78,13 +79,14 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 		}
 	}
 	
+	@SuppressWarnings("preview")
 	protected boolean createActionGoToTable(Function<I, Set<String>> f) {
 		log.setLength(0);
 		for (int i=0; i<statesList.size(); i+=1) {
 			var transitions = statesList.get(i).transitions;
 			for (var symbol: (Set<String>) transitions.keySet()) {
 				int state = statesList.indexOf(transitions.get(symbol));
-				actionGoToTable.put(i, symbol, grammar.isVariable(symbol) ? state : new Action(Shift, state)); 
+				actionGoToTable.put(i, symbol, new Action(grammar.isVariable(symbol) ? GoTo : Shift, state)); 
 			}
 		}
 		for (int i=0; i<statesList.size(); i+=1) {
@@ -96,8 +98,8 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 				}
 				for (var terminal: f.apply(item)) {
 					switch (actionGoToTable.get(i, terminal)) {
+						case null-> actionGoToTable.put(i, terminal, new Action(Reduce, grammar.indexOf(new Rule(item))));
 						case Action a-> log.append(a.type() + "-" + Reduce  + " conflict in state " + i + " at terminal " + terminal + "\n");
-						case null, default-> actionGoToTable.put(i, terminal, new Action(Reduce, grammar.indexOf(new Rule(item))));
 					}
 				}
 			}
@@ -110,6 +112,7 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 		return log.toString();
 	}
 
+	@SuppressWarnings("incomplete-switch")
 	public boolean accept(String line) {
 		log.setLength(0);
 		String[] tokens = (line + " " + EndToken).split("\\s+");
@@ -155,7 +158,7 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 				case Reduce:
 					Rule rule = grammar.get(action.operand);
 					symbols.pop(); for (int i=0; i<rule.rhs.length-1; i+=1) { states.pop(); symbols.pop(); }
-					state = actionGoToTable.get(states.peek(), symbols.push(rule.lhs));
+					state = actionGoToTable.get(states.peek(), symbols.push(rule.lhs)).operand;
 					log.append(format(format2, action.type + " " + action.operand, state, reduce(rule), symbols, states));
 			}
 			log.append(format(format1, state, token));
@@ -197,17 +200,17 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 	
 	private record Key(Integer state, String token) {}
 	
-	public class ActionGoToTable extends LinkedHashMap<Key, Object> {
+	public class ActionGoToTable extends LinkedHashMap<Key, Action> {
 		private static final long serialVersionUID = 1L;
-		public <T> T put(int state, String symbol, T t) {
-			return (T) put(new Key(state, symbol), t);
+		public Action put(int state, String token, Action a) {
+			return put(new Key(state, token), a);
 		}
-		public <T> T get(int state, String symbol) {
-			return (T) get(new Key(state, symbol));
+		public Action get(int state, String token) {
+			return get(new Key(state, token));
 		}
 		@SuppressWarnings("preview")
 		private int value(int state, String symbol) {
-			return switch (get(state, symbol)) { case Integer i-> i; case Action a-> a.operand; case null, default-> 0; };
+			return switch (get(state, symbol)) { case null-> 0; case Action a-> a.operand; };
 		}
 		@Override
 		public String toString() {
@@ -224,12 +227,12 @@ public abstract class LRParser<S extends State, I extends LR0Item> {
 			symbols.addAll(variables);
 			for (String symbol: symbols) {
 				var max = range(0,statesList.size()).map(i-> value(i,symbol)).max().getAsInt();
-				cSize.put(symbol, max(symbol.length(), (grammar.isTerminal(symbol) ? 2 : 1) + (int) log10(max)));
+				cSize.put(symbol, max(symbol.length(), 2 + (int) log10(max)));
 			}
 
 			String str = " ".repeat(sSize+1);
 			if (access) for (String terminal: terminals) str += format("%-"+ cSize.get(terminal) + "s ", terminal);
-			if (goTo) for (String variable: variables) str += format("%"+ cSize.get(variable) + "s ", variable);
+			if (goTo) for (String variable: variables) str += format("%-"+ cSize.get(variable) + "s ", variable);
 			str += "\n";
 
 			String brd = " ".repeat(sSize) + "+";
